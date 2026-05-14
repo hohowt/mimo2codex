@@ -418,6 +418,23 @@ interface AssemblyState {
   pendingReasoning: string | null;
   pendingToolCalls: ChatToolCall[];
   pendingAssistantText: string | null;
+  // Messages deferred during tool execution. Codex can inject developer/user
+  // messages (e.g. permission approvals) between function_call and
+  // function_call_output. Emitting them immediately would break the OpenAI
+  // API requirement that tool messages must directly follow the assistant
+  // message with tool_calls. We hold them here and flush after all tool
+  // outputs arrive.
+  deferredMessages: ChatMessage[];
+  // Number of function_calls whose output hasn't arrived yet. Used to
+  // decide when it's safe to flush deferredMessages without breaking the
+  // assistant(tool_calls)→tool(s) adjacency requirement.
+  outstandingToolCalls: number;
+}
+
+function flushDeferred(messages: ChatMessage[], state: AssemblyState): void {
+  if (state.deferredMessages.length === 0) return;
+  messages.push(...state.deferredMessages);
+  state.deferredMessages = [];
 }
 
 function flushAssistant(messages: ChatMessage[], state: AssemblyState): void {
@@ -445,6 +462,8 @@ function inputItemsToMessages(
     pendingReasoning: null,
     pendingToolCalls: [],
     pendingAssistantText: null,
+    deferredMessages: [],
+    outstandingToolCalls: 0,
   };
 
   for (const rawItem of items) {
@@ -499,8 +518,16 @@ function inputItemsToMessages(
           state.pendingAssistantText =
             typeof content === "string" ? content : "";
         } else {
-          flushAssistant(out, state);
-          out.push(messageItemToChat(item, ctx));
+          // If tool calls are in-flight (Codex injected this message
+          // between function_call and function_call_output), defer it so
+          // the OpenAI-required assistant(tool_calls)→tool ordering is
+          // preserved. Otherwise emit normally.
+          if (state.outstandingToolCalls > 0) {
+            state.deferredMessages.push(messageItemToChat(item, ctx));
+          } else {
+            flushAssistant(out, state);
+            out.push(messageItemToChat(item, ctx));
+          }
         }
         break;
       }
@@ -530,6 +557,7 @@ function inputItemsToMessages(
           type: "function",
           function: { name: item.name, arguments: item.arguments },
         });
+        state.outstandingToolCalls++;
         break;
       }
       case "function_call_output": {
@@ -539,11 +567,19 @@ function inputItemsToMessages(
           tool_call_id: item.call_id,
           content: toolOutputToString(item.output),
         });
+        state.outstandingToolCalls--;
+        // Only release deferred messages after the LAST tool output —
+        // all tool messages must be consecutive after the assistant
+        // message with tool_calls.
+        if (state.outstandingToolCalls === 0) {
+          flushDeferred(out, state);
+        }
         break;
       }
     }
   }
   flushAssistant(out, state);
+  flushDeferred(out, state);
   return out;
 }
 

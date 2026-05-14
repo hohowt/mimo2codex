@@ -854,4 +854,115 @@ describe("reqToChat", () => {
       | undefined;
     expect(a?.reasoning_content).toBe("full version");
   });
+
+  it("defers non-tool messages injected between function_call and function_call_output (async Codex injection)", () => {
+    // Codex can inject developer/user messages (e.g. permission approvals)
+    // between a function_call and its output. These must be deferred so the
+    // OpenAI-required assistant(tool_calls)→tool adjacency is preserved.
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "run cmd" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] },
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "shell",
+          arguments: '{"command":["ls"]}',
+        },
+        // Injected developer message during tool execution (Codex async)
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "permission saved" }] },
+        {
+          type: "function_call_output",
+          call_id: "call_1",
+          output: "file.txt",
+        },
+      ],
+    };
+    const chat = reqToChat(req);
+
+    // Find the assistant message with tool_calls
+    const tcIdx = chat.messages.findIndex((m) => m.tool_calls?.length);
+    expect(tcIdx).toBeGreaterThanOrEqual(0);
+    // The next message must be the tool response, NOT the developer message
+    expect(chat.messages[tcIdx + 1]?.role).toBe("tool");
+    expect(chat.messages[tcIdx + 1]?.tool_call_id).toBe("call_1");
+    // The deferred developer message comes AFTER the tool response
+    expect(chat.messages[tcIdx + 2]?.role).toBe("system");
+    expect(chat.messages[tcIdx + 2]?.content).toBe("permission saved");
+  });
+
+  it("defers injected messages across multiple parallel tool calls", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "do stuff" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "on it" }] },
+        {
+          type: "function_call",
+          call_id: "call_a",
+          name: "shell",
+          arguments: '{"command":["ls"]}',
+        },
+        {
+          type: "function_call",
+          call_id: "call_b",
+          name: "shell",
+          arguments: '{"command":["pwd"]}',
+        },
+        // Injected between function_calls and their outputs
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "perms saved" }] },
+        {
+          type: "function_call_output",
+          call_id: "call_a",
+          output: "a.out",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_b",
+          output: "b.out",
+        },
+      ],
+    };
+    const chat = reqToChat(req);
+
+    const tcIdx = chat.messages.findIndex((m) => m.tool_calls?.length);
+    expect(tcIdx).toBeGreaterThanOrEqual(0);
+    // Both tool messages must come before the deferred developer message
+    expect(chat.messages[tcIdx + 1]?.role).toBe("tool");
+    expect(chat.messages[tcIdx + 1]?.tool_call_id).toBe("call_a");
+    expect(chat.messages[tcIdx + 2]?.role).toBe("tool");
+    expect(chat.messages[tcIdx + 2]?.tool_call_id).toBe("call_b");
+    // Deferred message after ALL tool outputs
+    expect(chat.messages[tcIdx + 3]?.role).toBe("system");
+    expect(chat.messages[tcIdx + 3]?.content).toBe("perms saved");
+  });
+
+  it("no defer when tool calls are already resolved (normal case untouched)", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "hey" }] },
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "f",
+          arguments: "{}",
+        },
+        {
+          type: "function_call_output",
+          call_id: "c1",
+          output: "ok",
+        },
+        // This message arrives AFTER tools are resolved — should NOT be deferred
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "next turn" }] },
+      ],
+    };
+    const chat = reqToChat(req);
+
+    // The developer message after resolved tools should be in normal position
+    const sysMsg = chat.messages.find((m) => m.role === "system" && m.content === "next turn");
+    expect(sysMsg).toBeTruthy();
+  });
 });
