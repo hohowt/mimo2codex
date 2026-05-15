@@ -473,9 +473,33 @@ function flushAssistant(messages: ChatMessage[], state: AssemblyState): void {
   state.pendingAssistantText = null;
 }
 
+// Given a short tool name (from a function_call in conversation history)
+// and the full tool list from the request, look up whether it belongs to a
+// namespace and return the prefixed name. Codex drops the `namespace` field
+// from stored history, so we must recover it to keep tool names consistent
+// with the registered tool list seen by the model.
+function resolveNamespacedToolName(
+  shortName: string,
+  tools?: ResponsesTool[]
+): string {
+  if (!tools) return shortName;
+  for (const t of tools) {
+    const ns = t as { type: string; name?: string; tools?: ResponsesTool[] };
+    if (t.type !== "namespace" || typeof ns.name !== "string") continue;
+    for (const inner of ns.tools ?? []) {
+      const fn = inner as { type: string; name?: string };
+      if (fn.type === "function" && fn.name === shortName) {
+        return ns.name + shortName;
+      }
+    }
+  }
+  return shortName;
+}
+
 function inputItemsToMessages(
   items: ResponsesInputItem[],
-  ctx: { model: string; supportsImages: boolean; imageDropDir?: string }
+  ctx: { model: string; supportsImages: boolean; imageDropDir?: string },
+  reqTools?: ResponsesTool[]
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   const state: AssemblyState = {
@@ -572,10 +596,18 @@ function inputItemsToMessages(
         break;
       }
       case "function_call": {
+        // If the item has a `namespace` field (set by our own response
+        // path) OR the short name matches an inner tool of a namespace,
+        // recover the fully-prefixed name for the Chat Completions
+        // history. Codex drops `namespace` from stored history, so we
+        // also check the tool list to detect MCP calls.
+        const fullName = item.namespace
+          ? item.namespace + item.name
+          : resolveNamespacedToolName(item.name, reqTools);
         state.pendingToolCalls.push({
           id: item.call_id,
           type: "function",
-          function: { name: item.name, arguments: item.arguments },
+          function: { name: fullName, arguments: item.arguments },
         });
         state.outstandingToolCalls++;
         break;
@@ -618,7 +650,7 @@ export function reqToChat(req: ResponsesRequest, opts: ReqToChatOpts = {}): Chat
   if (typeof req.input === "string") {
     messages.push({ role: "user", content: req.input });
   } else if (Array.isArray(req.input)) {
-    for (const m of inputItemsToMessages(req.input, ctx)) {
+    for (const m of inputItemsToMessages(req.input, ctx, req.tools)) {
       messages.push(m);
     }
   }
