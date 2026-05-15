@@ -18,3 +18,4 @@ venv/
 
 # npm pack output (don't commit tarballs)
 *.tgz
+*.json

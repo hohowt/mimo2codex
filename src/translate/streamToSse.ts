@@ -25,8 +25,9 @@ function splitToolNamespace(
 ): { name: string; namespace?: string } {
   if (!tools) return { name: fullName };
   for (const t of tools) {
-    if (t.type === "namespace" && t.name && fullName.startsWith(t.name)) {
-      return { name: fullName.slice(t.name.length), namespace: t.name };
+    const ns = t as { type: string; name?: string };
+    if (t.type === "namespace" && typeof ns.name === "string" && fullName.startsWith(ns.name)) {
+      return { name: fullName.slice(ns.name.length), namespace: ns.name };
     }
   }
   return { name: fullName };

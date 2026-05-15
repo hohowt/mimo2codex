@@ -4,7 +4,16 @@
       "Bash(pkill -f \"dist/cli.js\")",
       "Bash(pkill -f \"18800\")",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(npx vitest *)",
+      "Bash(git commit *)",
+      "mcp__rbdc-mcp__db_status",
+      "mcp__rbdc-mcp__sql_query",
+      "WebFetch(domain:github.com)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "rbdc-mcp"
+  ]
 }
