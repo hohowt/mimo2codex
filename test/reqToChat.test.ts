@@ -965,4 +965,42 @@ describe("reqToChat", () => {
     const sysMsg = chat.messages.find((m) => m.role === "system" && m.content === "next turn");
     expect(sysMsg).toBeTruthy();
   });
+
+  it("drops orphan reasoning (reasoning_content without content or tool_calls is invalid per API)", () => {
+    // When a reasoning item appears but no assistant turn (text/tool_calls)
+    // follows before the next non-assistant message, the orphan reasoning
+    // would produce an assistant message with only reasoning_content.
+    // The Chat Completions API rejects this ("content or tool_calls must be
+    // set"), so we must drop it.
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "hey" }] },
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "I wonder what to do next..." }],
+        } as ResponsesRequest["input"] extends Array<infer T> ? T : never,
+        // No function_call or assistant message follows — reasoning is orphaned
+        { type: "message", role: "user", content: [{ type: "input_text", text: "next question" }] },
+      ],
+    };
+    const chat = reqToChat(req);
+
+    // There must NOT be an assistant message with only reasoning_content
+    const orphan = chat.messages.find(
+      (m) =>
+        m.role === "assistant" &&
+        m.reasoning_content &&
+        !m.content &&
+        !m.tool_calls?.length
+    );
+    expect(orphan).toBeUndefined();
+
+    // The assistant "hey" should still be present
+    const validAssistant = chat.messages.find(
+      (m) => m.role === "assistant" && m.content === "hey"
+    );
+    expect(validAssistant).toBeTruthy();
+  });
 });

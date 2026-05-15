@@ -443,6 +443,15 @@ function flushAssistant(messages: ChatMessage[], state: AssemblyState): void {
   const hasText = state.pendingAssistantText !== null;
   if (!hasReasoning && !hasTools && !hasText) return;
 
+  // A message with only reasoning_content and no content or tool_calls
+  // is invalid per the Chat Completions API ("content or tool_calls must
+  // be set"). Drop it — orphan reasoning without an assistant turn is
+  // meaningless.
+  if (hasReasoning && !hasTools && !hasText) {
+    state.pendingReasoning = null;
+    return;
+  }
+
   const msg: ChatMessage = { role: "assistant", content: hasText ? state.pendingAssistantText : null };
   if (hasTools) msg.tool_calls = state.pendingToolCalls;
   if (hasReasoning) msg.reasoning_content = state.pendingReasoning;
