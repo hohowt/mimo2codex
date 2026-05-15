@@ -536,7 +536,7 @@ describe("reqToChat", () => {
       .filter((t): t is { type: "function"; function: { name: string } } => t.type === "function")
       .map((t) => t.function.name)
       .sort();
-    expect(names).toEqual(["browser_click", "browser_open", "shell"]);
+    expect(names).toEqual(["playwrightbrowser_click", "playwrightbrowser_open", "shell"]);
   });
 
   it("server-side-only tools (code_interpreter, computer_use, etc.) are silently dropped", () => {

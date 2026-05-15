@@ -369,7 +369,10 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
   // 4. `namespace` wrapper — Codex bundles MCP / grouped tools under this. Shape
   //    we've seen in the wild:
   //       { type: "namespace", name?: string, tools?: Tool[] }
-  //    Recurse into nested tools and flatten. If there's no nested array, drop.
+  //    Recurse into nested tools and flatten. Each inner tool's name is
+  //    prefixed with the namespace name so that Codex's tool router can
+  //    dispatch the call to the correct MCP server (e.g. the model must
+  //    call `mcp__rbdc_mcp__sql_query`, not just `sql_query`).
   if (t.type === "namespace") {
     const ns = t as { name?: string; tools?: ResponsesTool[] };
     if (!Array.isArray(ns.tools) || ns.tools.length === 0) {
@@ -378,11 +381,19 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
       );
       return null;
     }
+    const prefix = ns.name ?? "";
     const nested: ChatTool[] = [];
     for (const inner of ns.tools) {
       const r = toolToChat(inner, opts);
-      if (Array.isArray(r)) nested.push(...r);
-      else if (r) nested.push(r);
+      if (Array.isArray(r)) {
+        for (const ct of r) {
+          if (ct.type === "function") ct.function.name = prefix + ct.function.name;
+          nested.push(ct);
+        }
+      } else if (r) {
+        if (r.type === "function") r.function.name = prefix + r.function.name;
+        nested.push(r);
+      }
     }
     return nested.length > 0 ? nested : null;
   }
