@@ -3,6 +3,7 @@ import type {
   ResponsesObject,
   ResponsesOutputItem,
   ResponsesRequest,
+  ResponsesTool,
   ResponsesUsage,
 } from "./types.js";
 import {
@@ -14,6 +15,19 @@ import {
 
 export interface RespToResponsesOpts {
   exposeReasoning: boolean;
+}
+
+function splitToolNamespace(
+  fullName: string,
+  tools?: ResponsesTool[]
+): { name: string; namespace?: string } {
+  if (!tools) return { name: fullName };
+  for (const t of tools) {
+    if (t.type === "namespace" && t.name && fullName.startsWith(t.name)) {
+      return { name: fullName.slice(t.name.length), namespace: t.name };
+    }
+  }
+  return { name: fullName };
 }
 
 function mapUsage(u: ChatResponse["usage"]): ResponsesUsage | null {
@@ -88,12 +102,14 @@ export function respToResponses(
 
   if (message?.tool_calls && message.tool_calls.length > 0) {
     for (const tc of message.tool_calls) {
+      const split = splitToolNamespace(tc.function.name, req.tools);
       output.push({
         type: "function_call",
         id: newFunctionCallId(),
         call_id: tc.id,
-        name: tc.function.name,
+        name: split.name,
         arguments: tc.function.arguments,
+        ...(split.namespace ? { namespace: split.namespace } : {}),
         status: "completed",
       });
     }

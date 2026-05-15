@@ -50,6 +50,10 @@ export interface ResponsesFunctionCallItem {
   id?: string;
   call_id: string;
   name: string;
+  // Namespace for MCP tools — required by Codex's tool router to dispatch
+  // function calls to the correct MCP server. Set when the call originates
+  // from a namespaced tool (e.g. `mcp__rbdc_mcp__sql_query`).
+  namespace?: string;
   arguments: string;
   status?: "in_progress" | "completed" | "incomplete";
 }

@@ -4,6 +4,7 @@ import type {
   ResponsesObject,
   ResponsesOutputItem,
   ResponsesRequest,
+  ResponsesTool,
   ResponsesUsage,
 } from "./types.js";
 import {
@@ -18,11 +19,25 @@ export interface StreamToSseOpts {
   exposeReasoning: boolean;
 }
 
+function splitToolNamespace(
+  fullName: string,
+  tools?: ResponsesTool[]
+): { name: string; namespace?: string } {
+  if (!tools) return { name: fullName };
+  for (const t of tools) {
+    if (t.type === "namespace" && t.name && fullName.startsWith(t.name)) {
+      return { name: fullName.slice(t.name.length), namespace: t.name };
+    }
+  }
+  return { name: fullName };
+}
+
 interface ToolCallState {
   itemId: string;
   outputIndex: number;
   callId: string;
   name: string;
+  namespace?: string;
   argsBuffer: string;
   argsEmitted: boolean;
 }
@@ -179,11 +194,13 @@ function openToolCall(
   const itemId = newFunctionCallId();
   const outputIndex = state.outputIndex++;
   const callId = id ?? `call_${itemId.slice(3)}`;
+  const split = splitToolNamespace(name ?? "", state.req.tools);
   const tc: ToolCallState = {
     itemId,
     outputIndex,
     callId,
-    name: name ?? "",
+    name: split.name,
+    namespace: split.namespace,
     argsBuffer: "",
     argsEmitted: false,
   };
@@ -195,6 +212,7 @@ function openToolCall(
       type: "function_call",
       call_id: callId,
       name: tc.name,
+      namespace: tc.namespace,
       arguments: "",
       status: "in_progress",
     },
@@ -290,6 +308,7 @@ function finalizeToolCalls(sink: SseSink, state: StreamState): void {
       type: "function_call",
       call_id: tc.callId,
       name: tc.name,
+      namespace: tc.namespace,
       arguments: tc.argsBuffer,
       status: "completed",
     };
@@ -379,7 +398,9 @@ function processChunk(sink: SseSink, state: StreamState, chunk: ChatStreamChunk)
       if (!tc) {
         tc = openToolCall(sink, state, tcDelta.index, tcDelta.id, tcDelta.function?.name);
       } else if (tcDelta.function?.name && !tc.name) {
-        tc.name = tcDelta.function.name;
+        const split = splitToolNamespace(tcDelta.function.name, state.req.tools);
+        tc.name = split.name;
+        tc.namespace = split.namespace;
       }
       if (tcDelta.function?.arguments) {
         tc.argsBuffer += tcDelta.function.arguments;
